@@ -1,0 +1,64 @@
+# Data and model artifacts — never committed
+data/
+models/
+mlruns/
+wandb/
+*.pkl
+*.pt
+*.pth
+*.h5
+*.parquet
+*.csv
+
+# Allow small reference CSVs in docs/ if we ever need them
+!docs/**/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Notebooks
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
