@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solar-forecast"
+version = "0.1.0"
+description = "Physics-informed solar generation forecasting"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Oladeji Adeshina" }]
+license = { text = "MIT" }
+
+# Runtime dependencies — keep this list minimal. Dev tools go in
+# [project.optional-dependencies] below so they're not forced on users.
+dependencies = [
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "pyarrow>=15.0.0",
+    "matplotlib>=3.8.0",
+    "tabulate>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+ml = [
+    # We'll fill these in when we get to modeling — keeping the slot reserved.
+    "scikit-learn>=1.4.0",
+    "xgboost>=2.0.0",
+    "torch>=2.2.0",
+    "mlflow>=2.10.0",
+]
+notebook = [
+    "jupyter>=1.0.0",
+    "ipykernel>=6.29.0",
+    "seaborn>=0.13.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Ruff: replaces black, isort, flake8, pylint. One tool, fast.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle errors and warnings
+    "F",        # pyflakes — undefined names, unused imports
+    "I",        # isort — import order
+    "UP",       # pyupgrade — modernize syntax
+    "B",        # bugbear — common bug patterns
+    "SIM",      # simplify — needless complexity
+]
+ignore = ["E501"]  # line too long is handled by formatter, not lint
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-v", "--strict-markers"]
