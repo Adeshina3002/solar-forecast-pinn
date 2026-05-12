@@ -220,3 +220,81 @@ class LinearWeather(Forecaster):
         # aren't penalized by clearly-wrong outputs.
         y_hat = np.clip(y_hat, 0.0, 1.0)
         return pd.Series(y_hat, index=df.index, name="pred")
+
+
+# ---------------------------------------------------------------------------
+# 5. Linear regression on physics features
+# ---------------------------------------------------------------------------
+
+class LinearPhysics(LinearWeather):
+    """
+    Forecast: linear regression on physics-engineered features alongside raw weather.
+
+    Subclasses LinearWeather and just overrides the default feature list —
+    same fitting code, same prediction code, different inputs. This is what
+    the uniform Forecaster interface is for.
+
+    Design note (worth a paragraph in the eventual blog post):
+
+    A naive instinct is to *replace* raw GHI and temperature with their
+    physics-derived counterparts G_POA and T_cell. Empirically, that's
+    *worse* for fleet-aggregated forecasting, because our G_POA assumes a
+    single panel orientation while the real fleet has every tilt and azimuth.
+    Raw GHI is a more honest measurement when the receiving geometry is
+    heterogeneous.
+
+    The right approach is to *augment*: keep the raw features, add the
+    physics features, let the linear regression learn its own coefficients
+    on each. This gives the model both the unbiased measurement (GHI) and
+    the physics-shaped features that already encode the diurnal/temperature
+    structure.
+    """
+
+    name = "linear_physics"
+
+    def __init__(
+        self,
+        target_col: str = "DE_solar_cf",
+        feature_cols: tuple[str, ...] = (
+            # Raw weather (kept for fleet-heterogeneity reasons explained above)
+            "DE_ghi",
+            "DE_temperature",
+            # Physics-engineered features
+            "DE_g_poa",
+            "DE_cf_theory",
+            "DE_clearness_index",
+            "DE_t_cell_c",
+            "DE_solar_elevation_deg",
+        ),
+    ):
+        super().__init__(target_col=target_col, feature_cols=feature_cols)
+
+
+# ---------------------------------------------------------------------------
+# 6. Pure-physics prediction (no fitting at all)
+# ---------------------------------------------------------------------------
+
+class PurePhysics(Forecaster):
+    """
+    Forecast: y_hat = cf_theory. Zero learned parameters.
+
+    This is the most aggressive baseline philosophically — we're asking:
+    "what if we *only* used physics, with no calibration to actual data?"
+
+    If `cf_theory` is well-calibrated for the German fleet, this will be
+    competitive with linear_physics. If it's not (likely it isn't — our
+    site config is a guess at the fleet average), this will underperform,
+    and that gap tells us how much "physics calibration" the linear models
+    are doing.
+    """
+
+    name = "pure_physics"
+
+    def __init__(self, theory_col: str = "DE_cf_theory"):
+        self.theory_col = theory_col
+
+    def fit(self, df: pd.DataFrame) -> "PurePhysics":
+        return self
+
+    def predict(self, df: pd.DataFrame) -> pd.Series:
+        return df[self.theory_col].rename("pred").clip(0.0, 1.0)
