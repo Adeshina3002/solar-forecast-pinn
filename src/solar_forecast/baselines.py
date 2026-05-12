@@ -298,3 +298,134 @@ class PurePhysics(Forecaster):
 
     def predict(self, df: pd.DataFrame) -> pd.Series:
         return df[self.theory_col].rename("pred").clip(0.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# 7. XGBoost — the strong ML reference
+# ---------------------------------------------------------------------------
+
+class XGBoostForecaster(Forecaster):
+    """
+    Gradient-boosted trees on tabular features, same fit/predict interface
+    as the rest. This is the "strong ML baseline" — if our PINN can't beat
+    XGBoost on the same features, the physics-informed loss isn't earning
+    its keep.
+
+    Design choices worth noting:
+
+    - **Early stopping uses an internal hold-out**, not the official val set.
+      We carve the last 10% of training data (chronological, not random)
+      for the early-stopping eval set. This keeps the official val set
+      genuinely unseen by the model during fitting — otherwise we'd be
+      tuning n_estimators against our reporting set, which is a subtle
+      form of leakage.
+
+    - **Hyperparameters are sensible defaults, not tuned.** This is
+      deliberate. The story we want to tell is "XGBoost out of the box,
+      no special effort." If we tuned, we'd be claiming a result that
+      readers can't easily reproduce, and the comparison to the PINN
+      would have to be against a tuned XGBoost too.
+
+    - **XGBoost handles NaN natively** in features. We pass features
+      through directly without filling. The first 168 hours of training
+      data will have NaN lag-168 values; XGBoost learns a default
+      direction for missing values at each split.
+    """
+
+    name = "xgboost"
+
+    def __init__(
+        self,
+        target_col: str = "DE_solar_cf",
+        feature_cols: tuple[str, ...] | None = None,
+        n_estimators: int = 1000,
+        learning_rate: float = 0.05,
+        max_depth: int = 6,
+        subsample: float = 0.8,
+        colsample_bytree: float = 0.8,
+        early_stopping_rounds: int = 50,
+        random_state: int = 42,
+        early_stop_holdout_frac: float = 0.1,
+    ):
+        self.target_col = target_col
+        self.feature_cols = list(feature_cols) if feature_cols is not None else None
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.subsample = subsample
+        self.colsample_bytree = colsample_bytree
+        self.early_stopping_rounds = early_stopping_rounds
+        self.random_state = random_state
+        self.early_stop_holdout_frac = early_stop_holdout_frac
+        self._model = None
+        self._fitted_features: list[str] | None = None
+
+    def fit(self, df: pd.DataFrame) -> "XGBoostForecaster":
+        # Imported lazily so the module doesn't require xgboost unless used —
+        # keeps lightweight baseline runs from paying the import cost.
+        import xgboost as xgb
+
+        if self.feature_cols is None:
+            raise ValueError(
+                "XGBoostForecaster needs explicit feature_cols. Pass them in the constructor."
+            )
+
+        # Drop rows where the target is NaN; keep rows with NaN in features
+        # (XGBoost handles them natively, and dropping would discard the
+        # early-lag rows we want the model to learn what to do with).
+        sorted_df = df.sort_index()
+        usable = sorted_df.dropna(subset=[self.target_col])
+
+        # Chronological hold-out for early stopping. We use the *last* slice
+        # rather than a random sample so the validation distribution
+        # resembles the future we want to predict.
+        n_holdout = max(1, int(len(usable) * self.early_stop_holdout_frac))
+        train_part = usable.iloc[:-n_holdout]
+        eval_part = usable.iloc[-n_holdout:]
+
+        X_train = train_part[self.feature_cols].to_numpy()
+        y_train = train_part[self.target_col].to_numpy()
+        X_eval = eval_part[self.feature_cols].to_numpy()
+        y_eval = eval_part[self.target_col].to_numpy()
+
+        self._model = xgb.XGBRegressor(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            max_depth=self.max_depth,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+            random_state=self.random_state,
+            early_stopping_rounds=self.early_stopping_rounds,
+            eval_metric="rmse",
+            tree_method="hist",
+            n_jobs=-1,
+        )
+        self._model.fit(
+            X_train, y_train,
+            eval_set=[(X_eval, y_eval)],
+            verbose=False,
+        )
+        self._fitted_features = list(self.feature_cols)
+        return self
+
+    def predict(self, df: pd.DataFrame) -> pd.Series:
+        if self._model is None:
+            raise RuntimeError(f"{self.name} must be .fit() before .predict()")
+        X = df[self._fitted_features].to_numpy()
+        y_hat = self._model.predict(X)
+        # Capacity factor is bounded; clip to ensure no nonsense values
+        # in the rare cases XGBoost extrapolates past the training envelope.
+        import numpy as np
+        y_hat = np.clip(y_hat, 0.0, 1.0)
+        return pd.Series(y_hat, index=df.index, name="pred")
+
+    @property
+    def feature_importance(self) -> pd.Series | None:
+        """Gain-based feature importance from the trained model."""
+        if self._model is None or self._fitted_features is None:
+            return None
+        return pd.Series(
+            self._model.feature_importances_,
+            index=self._fitted_features,
+            name="importance",
+        ).sort_values(ascending=False)
